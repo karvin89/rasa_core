@@ -6,6 +6,7 @@ from __future__ import unicode_literals
 from builtins import str
 from collections import namedtuple
 
+import os
 import argparse
 import logging
 from flask import Flask
@@ -17,6 +18,7 @@ from typing import Text, Optional, Union, List
 import rasa_core
 from rasa_core import constants, agent
 from rasa_core import utils, server
+from rasa_core.domain import Domain
 from rasa_core.agent import Agent
 from rasa_core.channels import (
     console, RestInput, InputChannel,
@@ -24,6 +26,7 @@ from rasa_core.channels import (
 from rasa_core.interpreter import (
     NaturalLanguageInterpreter)
 from rasa_core.utils import read_yaml_file, AvailableEndpoints
+from rasa_core.tracker_store import InMemoryTrackerStore, RedisTrackerStore
 
 logger = logging.getLogger()  # get the root logger
 
@@ -243,6 +246,41 @@ def load_agent(core_model, interpreter, endpoints,
                           action_endpoint=endpoints.action)
 
 
+def get_domain(path):
+    if not path:
+        raise ValueError("You need to provide a valid directory where "
+                            "to load the agent from when calling "
+                            "`Agent.load`.")
+
+    if os.path.isfile(path):
+        raise ValueError("You are trying to load a MODEL from a file "
+                            "('{}'), which is not possible. \n"
+                            "The persisted path should be a directory "
+                            "containing the various model files. \n\n"
+                            "If you want to load training data instead of "
+                            "a model, use `agent.load_data(...)` "
+                            "instead.".format(path))
+
+    domain = Domain.load(os.path.join(path, "domain.yml"))
+    return domain
+
+
+def create_tracker_store(core_model, endpoints):   
+    domain = get_domain(core_model) 
+    tracker_publish = utils.read_endpoint_config(endpoints, "tracker-publish")
+    # Setup tracker store    
+    tracker_store = None
+    store = utils.read_endpoint_config(endpoints, "tracker-store")
+    if store.type == 'memory':
+        tracker_store = InMemoryTrackerStore(domain=domain, publish_url=tracker_publish.url)
+    elif store.type == 'redis':        
+        tracker_store = RedisTrackerStore(domain=domain, host=store.host,
+                 port=store.port, db=store.db, password=store.password, 
+                 publish_url=tracker_publish.url)
+                 
+    return tracker_store
+
+
 if __name__ == '__main__':
     # Running as standalone python application
     arg_parser = create_argument_parser()
@@ -260,9 +298,11 @@ if __name__ == '__main__':
     _endpoints = AvailableEndpoints.read_endpoints(cmdline_args.endpoints)
     _interpreter = NaturalLanguageInterpreter.create(cmdline_args.nlu,
                                                      _endpoints.nlu)
+
+    tracker_store = create_tracker_store(cmdline_args.core, cmdline_args.endpoints)
     _agent = load_agent(cmdline_args.core,
                         interpreter=_interpreter,
-                        endpoints=_endpoints)
+                        endpoints=_endpoints, tracker_store=tracker_store)
 
     serve_application(_agent,
                       cmdline_args.connector,

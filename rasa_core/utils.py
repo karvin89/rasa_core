@@ -609,13 +609,17 @@ class EndpointConfig(object):
     """Configuration for an external HTTP endpoint."""
 
     def __init__(self, url, params=None, headers=None, basic_auth=None,
-                 token=None, token_name="token"):
+                 token=None, token_name="token", host=None, port=None, db=None, _type=None):
         self.url = url
         self.params = params if params else {}
         self.headers = headers if headers else {}
         self.basic_auth = basic_auth
         self.token = token
         self.token_name = token_name
+        self.host = host
+        self.port = port
+        self.db = db
+        self.type = _type
 
     def request(self,
                 method="post",  # type: Text
@@ -666,13 +670,17 @@ class EndpointConfig(object):
 
     @classmethod
     def from_dict(cls, data):
-        return EndpointConfig(
+        return cls(
                 data.get("url"),
                 data.get("params"),
                 data.get("headers"),
                 data.get("basic_auth"),
                 data.get("token"),
-                data.get("token_name"))
+                data.get("token_name"),
+                data.get("host"),
+                data.get("port"),
+                data.get("db"),
+                data.get("type"))
 
     def __eq__(self, other):
         if isinstance(self, type(other)):

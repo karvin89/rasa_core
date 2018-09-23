@@ -31,6 +31,9 @@ ADD . .
 
 RUN pip install -e . --no-cache-dir
 
+RUN python -m spacy download en_core_web_md && \
+  python -m spacy link en_core_web_md en
+
 VOLUME ["/app/dialogue", "/app/nlu", "/app/out"]
 
 EXPOSE 5005

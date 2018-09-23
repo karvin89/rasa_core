@@ -12,6 +12,8 @@ import logging
 # noinspection PyPep8Naming
 import six.moves.cPickle as pickler
 from typing import Text, Optional, List
+from requests_futures.sessions import FuturesSession
+import jsonpickle
 
 from rasa_core.actions.action import ACTION_LISTEN_NAME
 from rasa_core.broker import EventChannel
@@ -26,10 +28,11 @@ if typing.TYPE_CHECKING:
 
 
 class TrackerStore(object):
-    def __init__(self, domain, event_broker=None):
+    def __init__(self, domain, event_broker=None, publish_url=None):
         # type: (Optional[Domain], Optional[EventChannel]) -> None
         self.domain = domain
         self.event_broker = event_broker
+        self.publish_url = publish_url
 
     def get_or_create_tracker(self, sender_id):
         tracker = self.retrieve(sender_id)
@@ -79,10 +82,23 @@ class TrackerStore(object):
         # type: () -> Optional[List[Text]]
         raise NotImplementedError()
 
+    def post_tracker(self, tracker):
+        if(self.publish_url):
+            headers = {'Content-type': 'application/json', 
+                        'Accept': 'application/json'}
+            with FuturesSession() as session:
+                future = session.post(self.publish_url,
+                json=tracker.current_state(event_verbosity=EventVerbosity.ALL), 
+                headers=headers)
+
     @staticmethod
     def serialise_tracker(tracker):
         dialogue = tracker.as_dialogue()
         return pickler.dumps(dialogue)
+
+    def serialise_tracker_as_jsonstring(self, tracker):
+        dialogue = tracker.as_dialogue()
+        return jsonpickle.encode(dialogue)
 
     def deserialise_tracker(self, sender_id, _json):
         dialogue = pickler.loads(_json)
@@ -92,15 +108,16 @@ class TrackerStore(object):
 
 
 class InMemoryTrackerStore(TrackerStore):
-    def __init__(self, domain, event_broker=None):
+    def __init__(self, domain, event_broker=None, publish_url=None):
         self.store = {}
-        super(InMemoryTrackerStore, self).__init__(domain, event_broker)
+        super(InMemoryTrackerStore, self).__init__(domain, event_broker, publish_url)
 
     def save(self, tracker):
         if self.event_broker:
             self.stream_events(tracker)
         serialised = InMemoryTrackerStore.serialise_tracker(tracker)
         self.store[tracker.sender_id] = serialised
+        self.post_tracker(tracker)
 
     def retrieve(self, sender_id):
         if sender_id in self.store:
@@ -121,12 +138,12 @@ class RedisTrackerStore(TrackerStore):
         pass
 
     def __init__(self, domain, host='localhost',
-                 port=6379, db=0, password=None, event_broker=None):
+                 port=6379, db=0, password=None, event_broker=None, publish_url=None):
 
         import redis
         self.red = redis.StrictRedis(host=host, port=port, db=db,
                                      password=password)
-        super(RedisTrackerStore, self).__init__(domain, event_broker)
+        super(RedisTrackerStore, self).__init__(domain, event_broker, publish_url)
 
     def save(self, tracker, timeout=None):
         if self.event_broker:
@@ -134,6 +151,7 @@ class RedisTrackerStore(TrackerStore):
 
         serialised_tracker = self.serialise_tracker(tracker)
         self.red.set(tracker.sender_id, serialised_tracker, ex=timeout)
+        self.post_tracker(tracker)
 
     def retrieve(self, sender_id):
         stored = self.red.get(sender_id)
